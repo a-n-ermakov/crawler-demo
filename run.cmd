@@ -1,0 +1,1 @@
+java -jar target\crawler-demo-1.0-SNAPSHOT-jar-with-dependencies.jar https://ru.wikipedia.org/wiki/%D0%9F%D0%B0%D0%BD%D0%B4%D0%B5%D0%BC%D0%B8%D1%8F_COVID-19 2
