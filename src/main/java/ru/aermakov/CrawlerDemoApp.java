@@ -31,6 +31,9 @@ import static java.util.Objects.nonNull;
 public class CrawlerDemoApp {
 
     private static final int MAX_DEPTH_DEFAULT = 10;
+    private static final List<String> SKIPPED_EXTS = List.of(
+            "jpg", "jpeg", "png", "gif", "tiff", "bmp", "svg"
+    );
 
     private static final ForkJoinPool pool = ForkJoinPool.commonPool();
     static final Set<URL> urlsVisited = Collections.synchronizedSet(new HashSet<>());
@@ -86,17 +89,17 @@ public class CrawlerDemoApp {
     public static class CrawlerTask extends RecursiveTask<Map<String, Integer>> {
         private final URL url;
         private final int depth;
-        private final String urlDomain;
+        private final String domain;
 
         public CrawlerTask(URL url, int depth) {
             this.url = url;
             this.depth = depth;
             if (nonNull(url.getAuthority()) && !url.getAuthority().isEmpty()) {
-                this.urlDomain = String.format("%s://%s", url.getProtocol(), url.getAuthority());
+                this.domain = String.format("%s://%s", url.getProtocol(), url.getAuthority());
             } else {  //for test urls
                 var path = url.getPath();
                 var lastIdx = path.lastIndexOf("/");
-                this.urlDomain = String.format("%s:%s", url.getProtocol(), path.substring(0, lastIdx));
+                this.domain = String.format("%s:%s", url.getProtocol(), path.substring(0, lastIdx));
             }
         }
 
@@ -106,7 +109,8 @@ public class CrawlerDemoApp {
             try {
                 Document doc = timeLog(() -> {
                     try (var is = url.openStream()){
-                        return Jsoup.parse(is, "UTF-8", urlDomain);
+                        System.out.println("Parsing url: " + url.toString());
+                        return Jsoup.parse(is, "UTF-8", domain);
                     } catch (IOException e) {
                         return null;
                     }
@@ -140,12 +144,18 @@ public class CrawlerDemoApp {
                     var href = a.attr("href");
                     if (isNull(href) || href.isEmpty() || href.startsWith("#")) {
                         continue;
+                    } else if (href.startsWith("//")) {
+                        href = String.format("%s:%s", this.url.getProtocol(), href);
                     } else if (href.startsWith("/")) {
-                        href = this.urlDomain + href;
+                        href = this.domain + href;
                     }
                     try {
                         var url = new URL(href);
-                        if (this.url.getHost().equals(url.getHost()) && urlsVisited.add(url)) {
+                        var fileExt = extractFileExt(href);
+                        if (this.url.getHost().equals(url.getHost())
+                                && urlsVisited.add(url)
+                                && !SKIPPED_EXTS.contains(fileExt)
+                        ) {
                             var subtask = new CrawlerTask(url, depth+1);
                             subtask.fork();
                             subtasks.add(subtask);
@@ -192,6 +202,24 @@ public class CrawlerDemoApp {
         var finish = System.currentTimeMillis();
         System.out.printf("%s duration: %d ms%n", label, (finish - start));
         return res;
+    }
+
+    /**
+     * Extract file extension
+     *
+     * @param href string url
+     * @return extension
+     */
+    private static String extractFileExt(String href) {
+        var slashIdx = href.lastIndexOf("/");
+        var fileName = href.substring(slashIdx);
+        if (!fileName.isEmpty() && fileName.contains(".")) {
+            var parts = fileName.split("\\.");
+            var ext = parts[parts.length-1];
+            // System.out.println("Extension: " + ext);
+            return ext;
+        }
+        return "";
     }
 
 }
