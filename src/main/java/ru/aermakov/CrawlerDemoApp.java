@@ -4,6 +4,8 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
@@ -59,14 +61,20 @@ public class CrawlerDemoApp {
         URL url;
         try {
             url = new URL(urlStr);
-            var wordCounts = crawl(url);
-            System.out.println("Visited urls: " + urlsVisited);
+            var wordCounts = timeLog(() -> crawl(url), "total");
+            System.out.println("Visited urls: " + urlsVisited.size());
+            File file = new File("visited_urls.txt");
+            try (var os = new FileOutputStream(file)) {
+                os.write(urlsVisited.toString().getBytes());
+            } catch (IOException e) {
+                System.out.println("Error opening file" + e.getMessage());
+            }
             wordCounts.entrySet().stream()
                     .sorted((o1, o2) -> o2.getValue().compareTo(o1.getValue()))
                     .limit(100)
                     .forEach(e -> System.out.printf("%s: %d%n", e.getKey(), e.getValue()));
         } catch (MalformedURLException e) {
-            System.out.println("Incorrect URL: " + urlStr);
+            e.printStackTrace();
         }
     }
 
@@ -78,8 +86,6 @@ public class CrawlerDemoApp {
      */
     public static Map<String, Integer> crawl(URL url) {
         var task = new CrawlerTask(url, 0);
-        urlsVisited.add(url);
-        processedCount.incrementAndGet();
         return pool.invoke(task);
     }
 
@@ -105,6 +111,10 @@ public class CrawlerDemoApp {
 
         @Override
         protected Map<String, Integer> compute() {
+            if (!urlsVisited.add(url)) {
+                return Collections.emptyMap();
+            }
+            processedCount.incrementAndGet();
             Map<String, Integer> result = new HashMap<>();
             try {
                 Document doc = timeLog(() -> {
@@ -149,13 +159,11 @@ public class CrawlerDemoApp {
                     } else if (href.startsWith("/")) {
                         href = this.domain + href;
                     }
+                    href = cutParams(href);
                     try {
                         var url = new URL(href);
                         var fileExt = extractFileExt(href);
-                        if (this.url.getHost().equals(url.getHost())
-                                && urlsVisited.add(url)
-                                && !SKIPPED_EXTS.contains(fileExt)
-                        ) {
+                        if (this.url.getHost().equals(url.getHost()) && !SKIPPED_EXTS.contains(fileExt)) {
                             var subtask = new CrawlerTask(url, depth+1);
                             subtask.fork();
                             subtasks.add(subtask);
@@ -166,8 +174,8 @@ public class CrawlerDemoApp {
                         badCount ++;
                     }
                 }
-                System.out.printf("depth %d, good|skip|bad counts: %d|%d|%d%n", depth,
-                        subtasks.size(), skipCount, badCount);
+                System.out.printf("depth %d, good|skip|bad counts: %d|%d|%d, url %s%n", depth,
+                        subtasks.size(), skipCount, badCount, url);
                 //merging results
                 for (CrawlerTask subtask : subtasks) {
                     var subtaskResult = subtask.join();
@@ -178,7 +186,7 @@ public class CrawlerDemoApp {
 
                 }
                 System.out.printf("=== Progress: %d of %d complete ===%n",
-                        processedCount.addAndGet(subtasks.size()), urlsVisited.size()
+                        processedCount.get(), urlsVisited.size()
                 );
             } catch (Exception e) {
                 e.printStackTrace();
@@ -205,6 +213,24 @@ public class CrawlerDemoApp {
     }
 
     /**
+     * Cut url params (after ?) and links (after #)
+     *
+     * @param href string url
+     * @return string url without params
+     */
+    private static String cutParams(String href) {
+        var questionIdx = href.lastIndexOf("?");
+        if (questionIdx != -1) {
+            href = href.substring(0, questionIdx);
+        }
+        var sharpIdx = href.lastIndexOf("#");
+        if (sharpIdx != -1) {
+            href = href.substring(0, sharpIdx);
+        }
+        return href;
+    }
+
+    /**
      * Extract file extension
      *
      * @param href string url
@@ -217,7 +243,7 @@ public class CrawlerDemoApp {
             var parts = fileName.split("\\.");
             var ext = parts[parts.length-1];
             // System.out.println("Extension: " + ext);
-            return ext;
+            return ext.toLowerCase();
         }
         return "";
     }
